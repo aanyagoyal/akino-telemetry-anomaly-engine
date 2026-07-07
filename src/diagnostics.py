@@ -5,16 +5,18 @@ class RootCauseDiagnostic:
     def identify_cause(row) -> str:
         if not row["Is_Incident"]:
             return "Nominal"
+        
         causes = []
+        if row["Temperature_C"] > 78:
+            causes.append("Thermal Throttling (Overheat)")
         if row["CPU_Load_%"] > 75:
-            causes.append("High CPU Throttling")
+            causes.append("Compute Saturation")
         if row["RAM_Usage_%"] > 80:
-            causes.append("Memory Saturation (Leak)")
+            causes.append("Memory Saturation")
         if row["Network_Latency_ms"] > 100:
-            causes.append("Latency Spike")
-        if row["Packet_Loss_%"] > 2.0:
-            causes.append("Packet Drop / Collision")
-        return " + ".join(causes) if causes else "Multi-variate Drift"
+            causes.append("Latency Spike / Congestion")
+            
+        return " + ".join(causes) if causes else "Multi-metric Drift"
 
     @classmethod
     def annotate(cls, df: pd.DataFrame) -> pd.DataFrame:
