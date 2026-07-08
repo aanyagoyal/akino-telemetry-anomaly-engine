@@ -4,97 +4,29 @@ import numpy as np
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
 import plotly.graph_objects as go
-from src.diagnostics import RootCauseDiagnostic   # <--- Properly Imported
+from src.diagnostics import RootCauseDiagnostic
 
 st.set_page_config(
-    page_title="Akino Connect — Telemetry Health Portal",
-    page_icon="🖥️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Akino Connect — Infrastructure Telemetry Monitor",
+    layout="wide"
 )
 
-# Professional SaaS Styling
-st.markdown("""
-<style>
-    .stApp {
-        background-color: #f8fafc;
-        color: #1e293b;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    }
-    .saas-header {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        padding: 20px 24px;
-        margin-bottom: 24px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .badge-ok {
-        background-color: #ecfdf5;
-        color: #059669;
-        padding: 6px 14px;
-        border-radius: 9999px;
-        font-size: 0.85rem;
-        font-weight: 600;
-        border: 1px solid #a7f3d0;
-    }
-    .badge-alert {
-        background-color: #fef2f2;
-        color: #dc2626;
-        padding: 6px 14px;
-        border-radius: 9999px;
-        font-size: 0.85rem;
-        font-weight: 600;
-        border: 1px solid #fecaca;
-    }
-    div[data-testid="stMetric"] {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 16px 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
-    }
-    div[data-testid="stMetric"] label {
-        color: #64748b !important;
-        font-size: 0.8rem !important;
-        font-weight: 600;
-        text-transform: uppercase;
-    }
-    div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
-        color: #0f172a !important;
-        font-weight: 700;
-        font-size: 1.9rem !important;
-    }
-    .chart-card {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 16px 20px 8px 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
-        margin-bottom: 20px;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # Sidebar
-st.sidebar.markdown("### 🏢 **Akino Connect**")
-st.sidebar.caption("IT Infrastructure Management Services")
+st.sidebar.title("Akino Connect")
+st.sidebar.caption("IT Infrastructure Monitoring Portal")
 st.sidebar.markdown("---")
 
-server_node = st.sidebar.selectbox("Active Blade / Host", [
-    "prod-rack01-blade04.delhi.akino",
-    "edge-gw02.blr.akino",
-    "storage-san01.mumbai.akino"
+server_node = st.sidebar.selectbox("Monitored Node", [
+    "rack01-blade04.internal",
+    "edge-gw02.internal",
+    "storage-san01.internal"
 ])
 
-sample_count = st.sidebar.slider("Sampling Window (Minutes)", 60, 480, 240, step=30)
+sample_count = st.sidebar.slider("Monitor Window (Minutes)", 60, 480, 240, step=30)
 has_spikes = st.sidebar.checkbox("Simulate Incident Spikes", value=True)
-sensitivity = st.sidebar.slider("Anomaly Budget (%)", 1, 10, 4) / 100
+sensitivity = st.sidebar.slider("Anomaly Sensitivity (%)", 1, 10, 4) / 100
 
-# Telemetry Generator
+# Telemetry Generator with Packet Loss
 def get_telemetry_data(n_samples=240, inject_fault=True):
     np.random.seed(42)
     timestamps = pd.date_range(end=datetime.now(), periods=n_samples, freq="min")
@@ -103,128 +35,114 @@ def get_telemetry_data(n_samples=240, inject_fault=True):
     temp = 52 + 4 * np.sin(np.linspace(0, 12, n_samples)) + np.random.normal(0, 1.5, n_samples)
     ram = 48 + 4 * np.linspace(0, 1.2, n_samples) + np.random.normal(0, 1.5, n_samples)
     latency = 18 + np.random.exponential(3.5, n_samples)
+    packet_loss = np.random.exponential(0.3, n_samples)  # Base packet loss ~0.3%
     
     df = pd.DataFrame({
         "Timestamp": timestamps,
         "CPU_Load_%": np.clip(cpu, 5, 100).round(2),
         "Temperature_C": np.clip(temp, 35, 105).round(2),
         "RAM_Usage_%": np.clip(ram, 10, 100).round(2),
-        "Network_Latency_ms": np.clip(latency, 5, 400).round(2)
+        "Network_Latency_ms": np.clip(latency, 5, 400).round(2),
+        "Packet_Loss_%": np.clip(packet_loss, 0, 100).round(2)
     })
     
     if inject_fault:
+        # Incident 1: Overheating & Compute Load
         idx1 = int(n_samples * 0.35)
         df.loc[idx1:idx1+5, "Temperature_C"] = np.clip(df.loc[idx1:idx1+5, "Temperature_C"] + 38, 40, 96)
         df.loc[idx1:idx1+5, "CPU_Load_%"] = np.clip(df.loc[idx1:idx1+5, "CPU_Load_%"] + 42, 0, 98)
         
+        # Incident 2: Network Congestion & High Packet Loss
         idx2 = int(n_samples * 0.75)
         df.loc[idx2:idx2+6, "Network_Latency_ms"] += 175
+        df.loc[idx2:idx2+6, "Packet_Loss_%"] = np.clip(df.loc[idx2:idx2+6, "Packet_Loss_%"] + 12.5, 0, 85)
         df.loc[idx2:idx2+6, "CPU_Load_%"] = np.clip(df.loc[idx2:idx2+6, "CPU_Load_%"] + 25, 0, 92)
 
     return df
 
+# Data Pipeline
 raw_df = get_telemetry_data(sample_count, has_spikes)
 
-# Unsupervised ML Engine
-feature_cols = ["CPU_Load_%", "Temperature_C", "RAM_Usage_%", "Network_Latency_ms"]
+# Model Training (Including Packet_Loss_%)
+feature_cols = ["CPU_Load_%", "Temperature_C", "RAM_Usage_%", "Network_Latency_ms", "Packet_Loss_%"]
 iso_model = IsolationForest(n_estimators=100, contamination=sensitivity, random_state=42)
 raw_df["Anomaly_Flag"] = iso_model.fit_predict(raw_df[feature_cols])
 raw_df["Is_Incident"] = raw_df["Anomaly_Flag"] == -1
 raw_df["Anomaly_Score"] = iso_model.decision_function(raw_df[feature_cols]).round(4)
 
-# Execute Diagnostics Module Properly
+# Diagnostics Engine
 df = RootCauseDiagnostic.annotate(raw_df)
 incidents = df[df["Is_Incident"]].copy()
 total_incidents = len(incidents)
 
-# Top Bar
-status_badge = (
-    f'<span class="badge-alert">● {total_incidents} CRITICAL ANOMALIES DETECTED</span>'
-    if total_incidents > 0
-    else '<span class="badge-ok">● ALL SYSTEMS NOMINAL</span>'
-)
+# Header
+st.title("Server Health & Telemetry Anomaly Monitor")
+st.caption(f"Cluster Node: {server_node} | Engine: Unsupervised Isolation Forest (5 Feature Vectors)")
 
-st.markdown(f"""
-<div class="saas-header">
-    <div>
-        <h2 style="margin:0; font-size: 1.45rem; font-weight:700; color:#0f172a;">
-            Telemetry Observability & Failure Isolation
-        </h2>
-        <p style="margin: 4px 0 0 0; color:#64748b; font-size: 0.88rem;">
-            Node: <code style="color:#0284c7; background:#f0f9ff; padding:2px 6px; border-radius:4px;">{server_node}</code>
-            &nbsp;•&nbsp; Polling Interval: 60s &nbsp;•&nbsp; Engine: Isolation Forest
-        </p>
-    </div>
-    <div>{status_badge}</div>
-</div>
-""", unsafe_allow_html=True)
+# KPI Summary Row (5 Metrics)
+k1, k2, k3, k4, k5 = st.columns(5)
+k1.metric("CPU Load", f"{df['CPU_Load_%'].iloc[-1]}%")
+k2.metric("Core Temp", f"{df['Temperature_C'].iloc[-1]} °C")
+k3.metric("RAM Utilized", f"{df['RAM_Usage_%'].iloc[-1]}%")
+k4.metric("Packet Loss", f"{df['Packet_Loss_%'].iloc[-1]}%", delta=f"{df['Packet_Loss_%'].max():.1f}% Peak", delta_color="inverse")
+k5.metric("Flagged Incidents", f"{total_incidents} events", delta="Action Required" if total_incidents > 0 else "Optimal", delta_color="inverse")
 
-# KPI Metrics
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("CPU Load", f"{df['CPU_Load_%'].iloc[-1]}%", delta=f"{df['CPU_Load_%'].max():.1f}% Peak")
-c2.metric("Core Temp", f"{df['Temperature_C'].iloc[-1]} °C", delta=f"{df['Temperature_C'].max():.1f} °C Peak")
-c3.metric("RAM Utilized", f"{df['RAM_Usage_%'].iloc[-1]}%", delta="Within SLA", delta_color="off")
-c4.metric("Incident Window", f"{total_incidents} events", delta="Action Needed" if total_incidents > 0 else "Normal", delta_color="inverse")
+st.markdown("---")
 
-st.markdown("<br>", unsafe_allow_html=True)
-
-# Chart Creator
-def create_chart(title, y_col, unit, stroke_color, fill_color):
+# Chart Maker Function
+def render_metric_plot(title, col_name, unit, line_color):
     fig = go.Figure()
+    
     fig.add_trace(go.Scatter(
-        x=df["Timestamp"], y=df[y_col], mode="lines", name=title,
-        line=dict(color=stroke_color, width=2), fill="tozeroy", fillcolor=fill_color
+        x=df["Timestamp"], 
+        y=df[col_name], 
+        mode="lines", 
+        name=title,
+        line=dict(color=line_color, width=2)
     ))
+    
     if total_incidents > 0:
         fig.add_trace(go.Scatter(
-            x=incidents["Timestamp"], y=incidents[y_col], mode="markers", name="Anomaly Flag",
-            marker=dict(color="#ef4444", size=8, line=dict(color="#ffffff", width=1.5))
+            x=incidents["Timestamp"], 
+            y=incidents[col_name], 
+            mode="markers", 
+            name="Anomaly",
+            marker=dict(color="#d63031", size=8, symbol="circle")
         ))
+        
     fig.update_layout(
-        title=dict(text=f"<b>{title}</b> <span style='font-size:12px; color:#94a3b8;'>({unit})</span>", font=dict(size=14, color="#1e293b")),
-        template="plotly_white",
+        title=f"<b>{title}</b> ({unit})",
         height=240,
         margin=dict(l=10, r=10, t=35, b=10),
-        xaxis=dict(showgrid=True, gridcolor="#f1f5f9", tickfont=dict(size=10, color="#94a3b8")),
-        yaxis=dict(showgrid=True, gridcolor="#f1f5f9", tickfont=dict(size=10, color="#94a3b8")),
+        xaxis_title="",
+        yaxis_title=unit,
         showlegend=False,
         hovermode="x unified"
     )
     return fig
 
-# 2x2 Grid
-col_left, col_right = st.columns(2)
-with col_left:
-    st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-    st.plotly_chart(create_chart("CPU Load Ratio", "CPU_Load_%", "%", "#2563eb", "rgba(37, 99, 235, 0.06)"), use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-    st.plotly_chart(create_chart("RAM Consumption", "RAM_Usage_%", "%", "#7c3aed", "rgba(124, 58, 237, 0.06)"), use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+# Charts Display (Row 1: Hardware Metrics)
+r1_c1, r1_c2, r1_c3 = st.columns(3)
+with r1_c1:
+    st.plotly_chart(render_metric_plot("CPU Load Ratio", "CPU_Load_%", "%", "#0984e3"), use_container_width=True)
+with r1_c2:
+    st.plotly_chart(render_metric_plot("Core Thermal Reading", "Temperature_C", "°C", "#e17055"), use_container_width=True)
+with r1_c3:
+    st.plotly_chart(render_metric_plot("RAM Consumption", "RAM_Usage_%", "%", "#6c5ce7"), use_container_width=True)
 
-with col_right:
-    st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-    st.plotly_chart(create_chart("Core Thermal Reading", "Temperature_C", "°C", "#ea580c", "rgba(234, 88, 12, 0.06)"), use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-    st.plotly_chart(create_chart("Network Round-Trip Latency", "Network_Latency_ms", "ms", "#059669", "rgba(5, 150, 105, 0.06)"), use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+# Charts Display (Row 2: Network Metrics)
+r2_c1, r2_c2 = st.columns(2)
+with r2_c1:
+    st.plotly_chart(render_metric_plot("Network Latency", "Network_Latency_ms", "ms", "#00b894"), use_container_width=True)
+with r2_c2:
+    st.plotly_chart(render_metric_plot("Network Packet Loss", "Packet_Loss_%", "%", "#d63031"), use_container_width=True)
 
-# Incident Audit Table
-st.markdown("### 📋 Identified Incidents & Root Causes")
+# Incident Table
+st.markdown("---")
+st.subheader("Identified Incident Log & Root Cause Analysis")
+
 if total_incidents > 0:
-    table_view = incidents[["Timestamp", "Root_Cause", "CPU_Load_%", "Temperature_C", "RAM_Usage_%", "Network_Latency_ms", "Anomaly_Score"]]
-    st.dataframe(
-        table_view.style.format({
-            "CPU_Load_%": "{:.1f}%",
-            "Temperature_C": "{:.1f}°C",
-            "RAM_Usage_%": "{:.1f}%",
-            "Network_Latency_ms": "{:.1f} ms",
-            "Anomaly_Score": "{:.4f}"
-        }),
-        use_container_width=True
-    )
+    table_view = incidents[["Timestamp", "Root_Cause", "CPU_Load_%", "Temperature_C", "RAM_Usage_%", "Network_Latency_ms", "Packet_Loss_%"]]
+    st.dataframe(table_view, use_container_width=True)
 else:
-    st.success("Telemetry normal. Zero threshold deviations or multi-metric anomalies found.")
+    st.success("All systems nominal. No correlated multi-metric anomalies found.")

@@ -14,7 +14,9 @@ class RootCauseDiagnostic:
         if row["RAM_Usage_%"] > 80:
             causes.append("Memory Saturation")
         if row["Network_Latency_ms"] > 100:
-            causes.append("Latency Spike / Congestion")
+            causes.append("Latency Spike")
+        if row["Packet_Loss_%"] > 5.0:
+            causes.append("Network Packet Drop / Cable Fault")
             
         return " + ".join(causes) if causes else "Multi-metric Drift"
 
